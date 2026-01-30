@@ -1,5 +1,6 @@
 import os
 import argparse
+import sys
 
 from dotenv import load_dotenv
 from google import genai
@@ -29,44 +30,62 @@ def main():
 
 
 def generate_content(client, messages, verbose):
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=messages,
-        config=types.GenerateContentConfig(
-            tools=[available_functions], 
-            system_instruction=system_prompt),
-    )
+    for loop in range(20):
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=messages,
+            config=types.GenerateContentConfig(
+                tools=[available_functions],
+                system_instruction=system_prompt,
+            ),
+        )
 
-    if not response.usage_metadata:
-        raise RuntimeError("Gemini API response appears to be malformed")
+        if not response.candidates:
+            raise Exception("No candidates returned from model")
 
-    if verbose:
-        print("Prompt tokens:", response.usage_metadata.prompt_token_count)
-        print("Response tokens:", response.usage_metadata.candidates_token_count)
+        for cand in response.candidates:
+            if cand.content:
+                messages.append(cand.content)
 
-    if response.function_calls:
-        function_results = []
+        if not response.usage_metadata:
+            raise RuntimeError("Gemini API response appears to be malformed")
 
-        for fc in response.function_calls:
-            fc_result = call_function(fc, verbose)
+        if verbose:
+            print("Prompt tokens:", response.usage_metadata.prompt_token_count)
+            print("Response tokens:", response.usage_metadata.candidates_token_count)
 
-            if not fc_result.parts:
-                raise Exception("Parts missing from messages content")
+        if response.function_calls:
+            function_results = []
 
-            fr = fc_result.parts[0].function_response
-            if fr is None:
-                raise Exception("Function response missing from parts")
+            for fc in response.function_calls:
+                fc_result = call_function(fc, verbose)
 
-            if fr.response is None:
-                raise Exception("Function response is None")
+                if not fc_result.parts:
+                    raise Exception("Parts missing from messages content")
 
-            function_results.append(fc_result.parts[0])
+                fr = fc_result.parts[0].function_response
+                if fr is None:
+                    raise Exception("Function response missing from parts")
 
-            if verbose:
-                print(f"-> {fr.response}")
+                if fr.response is None:
+                    raise Exception("Function response is None")
+
+                function_results.append(fc_result.parts[0])
+
+                if verbose:
+                    print(f"-> {fr.response}")
+
+            if function_results:
+                messages.append(types.Content(role="user", parts=function_results))
+        else:
+            print("Response:")
+            print(response.text)
+            break
     else:
-        print("Response:")
-        print(response.text)
+        print("Error: Maximum number of iterations reached without a final response.")
+        sys.exit(1)
+
+        
 
 
 if __name__ == "__main__":
